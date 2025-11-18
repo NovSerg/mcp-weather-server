@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run test)",
+      "Bash(npm run lint)",
+      "Bash(npm run format:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm install:*)",
+      "Bash(cd:*)",
+      "Bash(if exist scripts rmdir /s /q scripts)",
+      "Bash(del /f /q DEPLOYMENT.md DEPLOYMENT_QUICKSTART.md Dockerfile docker-compose.yml .dockerignore 2)",
+      "Bash(nul)",
+      "Bash(if exist testse2e rmdir /s /q testse2e)",
+      "Bash(del /f /q playwright.config.ts 2)",
+      "Bash(find:*)",
+      "Bash(tree:*)",
+      "Bash(wc:*)",
+      "Bash(git init:*)",
+      "Bash(npm run build:*)",
+      "WebSearch",
+      "Bash(npx tsc:*)",
+      "Bash(tasklist:*)",
+      "Bash(mkdir:*)",
+      "Bash(FIGMA_API_KEY=test_token npx tsx:*)",
+      "Bash(findstr:*)",
+      "Bash(test:*)",
+      "Bash(cat:*)",
+      "Bash(xargs cat:*)",
+      "Bash(taskkill:*)",
+      "Bash(node test-streaming-fix.js:*)",
+      "Bash(node test-comprehensive.js:*)",
+      "Bash(git remote:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
