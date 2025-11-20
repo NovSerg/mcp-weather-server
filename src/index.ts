@@ -57,6 +57,69 @@ interface WeatherResponse {
   visibility: number;
 }
 
+// Forecast response type
+interface ForecastResponse {
+  city: {
+    name: string;
+    country: string;
+    timezone: number;
+  };
+  list: Array<{
+    dt: number;
+    dt_txt: string;
+    main: {
+      temp: number;
+      feels_like: number;
+      temp_min: number;
+      temp_max: number;
+      pressure: number;
+      humidity: number;
+    };
+    weather: Array<{
+      main: string;
+      description: string;
+      icon: string;
+    }>;
+    wind: {
+      speed: number;
+      deg: number;
+    };
+    clouds: {
+      all: number;
+    };
+    pop: number; // Probability of precipitation
+  }>;
+}
+
+// Air quality response type
+interface AirQualityResponse {
+  list: Array<{
+    main: {
+      aqi: number; // Air Quality Index: 1 = Good, 2 = Fair, 3 = Moderate, 4 = Poor, 5 = Very Poor
+    };
+    components: {
+      co: number;    // Carbon monoxide
+      no: number;    // Nitrogen monoxide
+      no2: number;   // Nitrogen dioxide
+      o3: number;    // Ozone
+      so2: number;   // Sulphur dioxide
+      pm2_5: number; // Fine particles
+      pm10: number;  // Coarse particles
+      nh3: number;   // Ammonia
+    };
+    dt: number;
+  }>;
+}
+
+// Geocoding response type
+interface GeocodingResponse {
+  name: string;
+  lat: number;
+  lon: number;
+  country: string;
+  state?: string;
+}
+
 // Fetch current weather from OpenWeather API
 async function getCurrentWeather(
   city: string,
@@ -106,6 +169,154 @@ async function getCurrentWeather(
   );
 }
 
+// Get coordinates for a city using Geocoding API
+async function getCoordinates(city: string): Promise<{ lat: number; lon: number; name: string; country: string }> {
+  if (!OPENWEATHER_API_KEY) {
+    throw new Error("OPENWEATHER_API_KEY is not set.");
+  }
+
+  const url = `http://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(city)}&limit=1&appid=${OPENWEATHER_API_KEY}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Geocoding API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as GeocodingResponse[];
+
+  if (!data || data.length === 0) {
+    throw new Error(`City "${city}" not found`);
+  }
+
+  return {
+    lat: data[0].lat,
+    lon: data[0].lon,
+    name: data[0].name,
+    country: data[0].country,
+  };
+}
+
+// Fetch 5-day forecast from OpenWeather API
+async function getForecast(
+  city: string,
+  units: string = "metric",
+  lang: string = "ru"
+): Promise<string> {
+  if (!OPENWEATHER_API_KEY) {
+    throw new Error("OPENWEATHER_API_KEY is not set.");
+  }
+
+  const url = `${OPENWEATHER_BASE_URL}/forecast?q=${encodeURIComponent(city)}&units=${units}&lang=${lang}&appid=${OPENWEATHER_API_KEY}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(`City "${city}" not found`);
+    }
+    throw new Error(`OpenWeather API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as ForecastResponse;
+  const tempUnit = units === "metric" ? "°C" : units === "imperial" ? "°F" : "K";
+  const windUnit = units === "metric" ? "м/с" : "mph";
+
+  // Group forecasts by date
+  const dailyForecasts: Record<string, typeof data.list> = {};
+  for (const item of data.list) {
+    const date = item.dt_txt.split(" ")[0];
+    if (!dailyForecasts[date]) {
+      dailyForecasts[date] = [];
+    }
+    dailyForecasts[date].push(item);
+  }
+
+  // Format the response
+  const formattedForecast = Object.entries(dailyForecasts).map(([date, items]) => {
+    const temps = items.map(i => i.main.temp);
+    const minTemp = Math.min(...temps);
+    const maxTemp = Math.max(...temps);
+
+    // Get most common weather condition
+    const conditions = items.map(i => i.weather[0].description);
+    const mostCommon = conditions.sort((a, b) =>
+      conditions.filter(v => v === a).length - conditions.filter(v => v === b).length
+    ).pop();
+
+    return {
+      date,
+      temp_range: `${minTemp.toFixed(1)}${tempUnit} - ${maxTemp.toFixed(1)}${tempUnit}`,
+      condition: mostCommon,
+      precipitation_chance: `${Math.max(...items.map(i => i.pop)) * 100}%`,
+      hourly: items.map(item => ({
+        time: item.dt_txt.split(" ")[1].slice(0, 5),
+        temp: `${item.main.temp}${tempUnit}`,
+        condition: item.weather[0].description,
+        wind: `${item.wind.speed} ${windUnit}`,
+        humidity: `${item.main.humidity}%`,
+      })),
+    };
+  });
+
+  return JSON.stringify(
+    {
+      location: `${data.city.name}, ${data.city.country}`,
+      timezone_offset: `${data.city.timezone / 3600} hours from UTC`,
+      forecast: formattedForecast,
+    },
+    null,
+    2
+  );
+}
+
+// Fetch air quality from OpenWeather API
+async function getAirQuality(city: string): Promise<string> {
+  if (!OPENWEATHER_API_KEY) {
+    throw new Error("OPENWEATHER_API_KEY is not set.");
+  }
+
+  // First get coordinates for the city
+  const coords = await getCoordinates(city);
+
+  const url = `${OPENWEATHER_BASE_URL}/air_pollution?lat=${coords.lat}&lon=${coords.lon}&appid=${OPENWEATHER_API_KEY}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Air Quality API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as AirQualityResponse;
+  const aqiData = data.list[0];
+
+  // AQI descriptions
+  const aqiDescriptions: Record<number, string> = {
+    1: "Хорошее",
+    2: "Удовлетворительное",
+    3: "Умеренное",
+    4: "Плохое",
+    5: "Очень плохое",
+  };
+
+  return JSON.stringify(
+    {
+      location: `${coords.name}, ${coords.country}`,
+      air_quality_index: aqiData.main.aqi,
+      air_quality_description: aqiDescriptions[aqiData.main.aqi] || "Неизвестно",
+      components: {
+        co: `${aqiData.components.co} μg/m³ (угарный газ)`,
+        no: `${aqiData.components.no} μg/m³ (оксид азота)`,
+        no2: `${aqiData.components.no2} μg/m³ (диоксид азота)`,
+        o3: `${aqiData.components.o3} μg/m³ (озон)`,
+        so2: `${aqiData.components.so2} μg/m³ (диоксид серы)`,
+        pm2_5: `${aqiData.components.pm2_5} μg/m³ (мелкие частицы)`,
+        pm10: `${aqiData.components.pm10} μg/m³ (крупные частицы)`,
+        nh3: `${aqiData.components.nh3} μg/m³ (аммиак)`,
+      },
+    },
+    null,
+    2
+  );
+}
+
 // Create MCP server factory function
 const createServer = () => {
   const server = new McpServer(
@@ -145,6 +356,60 @@ const createServer = () => {
           {
             type: "text",
             text: weatherData,
+          },
+        ],
+      };
+    }
+  );
+
+  // Register forecast tool
+  server.tool(
+    "get_forecast",
+    "Get 5-day weather forecast for a specified city. Returns forecast every 3 hours including temperature, conditions, precipitation chance, wind, and humidity.",
+    {
+      city: z.string().describe("City name (e.g., 'Moscow', 'London', 'New York')"),
+      units: z
+        .enum(["metric", "imperial", "standard"])
+        .default("metric")
+        .describe("Temperature units: metric (Celsius), imperial (Fahrenheit), or standard (Kelvin)"),
+      lang: z
+        .string()
+        .default("ru")
+        .describe("Language code for weather description (e.g., 'ru' for Russian, 'en' for English)"),
+    },
+    {
+      title: "5-Day Weather Forecast",
+    },
+    async ({ city, units = "metric", lang = "ru" }) => {
+      const forecastData = await getForecast(city, units, lang);
+      return {
+        content: [
+          {
+            type: "text",
+            text: forecastData,
+          },
+        ],
+      };
+    }
+  );
+
+  // Register air quality tool
+  server.tool(
+    "get_air_quality",
+    "Get current air quality information for a specified city. Returns Air Quality Index (AQI) and concentrations of pollutants like PM2.5, CO, NO2, O3, etc.",
+    {
+      city: z.string().describe("City name (e.g., 'Moscow', 'London', 'New York')"),
+    },
+    {
+      title: "Air Quality",
+    },
+    async ({ city }) => {
+      const airQualityData = await getAirQuality(city);
+      return {
+        content: [
+          {
+            type: "text",
+            text: airQualityData,
           },
         ],
       };
@@ -294,13 +559,19 @@ app.delete("/mcp", async (req: Request, res: Response) => {
 
 // Start server
 app.listen(MCP_PORT, () => {
-  console.log(`✅ MCP Weather Server listening on http://localhost:${MCP_PORT}`);
-  console.log(`   OpenWeather API Key: ${OPENWEATHER_API_KEY ? "✓ Configured" : "✗ Not configured"}`);
-  console.log(`   Endpoints:`);
-  console.log(`   - POST   /mcp  (JSON-RPC requests)`);
-  console.log(`   - GET    /mcp  (SSE stream)`);
-  console.log(`   - DELETE /mcp  (session termination)`);
-  console.log(`   - GET    /health (health check)`);
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`🌤️  MCP Weather Server`);
+  console.log(`${'='.repeat(60)}`);
+  console.log(`📡 Server URL: http://localhost:${MCP_PORT}`);
+  console.log(`🏥 Health check: http://localhost:${MCP_PORT}/health`);
+  console.log(`\n🔑 API Configuration:`);
+  console.log(`   OpenWeather API: ${OPENWEATHER_API_KEY ? "✅ Configured" : "❌ Not configured"}`);
+  console.log(`\n📋 Available endpoints:`);
+  console.log(`   • POST   /mcp       - JSON-RPC requests`);
+  console.log(`   • GET    /mcp       - SSE stream`);
+  console.log(`   • DELETE /mcp       - Close session`);
+  console.log(`   • GET    /health    - Health status`);
+  console.log(`${'='.repeat(60)}\n`);
 });
 
 // Graceful shutdown
